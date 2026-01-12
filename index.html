@@ -61,6 +61,7 @@
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
       gap: 16px;
+      align-items: start; /* prevent other cards from stretching when one expands */
     }
     .card {
       background: var(--card);
