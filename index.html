@@ -281,8 +281,7 @@
     };
 
     // Supabase realtime client
-    const { createClient } = supabase;
-    const realtimeClient = createClient(SUPABASE_URL, SUPABASE_KEY);
+    const realtimeClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     function formatTs(ts) {
       if (!ts) return "";
@@ -431,12 +430,20 @@
       });
     }
 
+    function setupGlobalHeartbeat() {
+      // Fallback: refresh all cards every 10s in case realtime is unavailable.
+      setInterval(() => {
+        ["bp","temp","hr","spo2"].forEach(t => refresh(t, false));
+      }, 10000);
+    }
+
     // Init
     (async function() {
       setupIntervals();
       setupHistoryButtons();
       await Promise.all(["bp","temp","hr","spo2"].map(t => refresh(t, false)));
       setupRealtime();
+      setupGlobalHeartbeat();
     })();
   </script>
 </body>
