@@ -61,7 +61,8 @@
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
       gap: 16px;
-      align-items: start; /* prevent other cards from stretching when one expands */
+      align-items: stretch;
+      grid-auto-rows: 1fr;
     }
     .card {
       background: var(--card);
@@ -72,6 +73,7 @@
       flex-direction: column;
       gap: 12px;
       box-shadow: 0 20px 40px rgba(0,0,0,0.25);
+      height: 100%;
     }
     .card-header {
       display: flex;
@@ -96,7 +98,7 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
     }
     select, button {
       background: #0b1220;
@@ -114,6 +116,17 @@
       color: #0b1220;
       font-weight: 700;
       box-shadow: 0 10px 30px rgba(34,211,238,0.2);
+    }
+    .controls select,
+    .controls button {
+      flex-shrink: 0;
+    }
+    .controls select {
+      min-width: 86px;
+      text-align-last: center;
+    }
+    .controls button.action {
+      min-width: 88px;
     }
     .history {
       background: #0b1220;
@@ -154,6 +167,17 @@
     @media (max-width: 640px) {
       body { padding: 16px; }
       .value { font-size: 28px; }
+      .controls { flex-wrap: wrap; }
+    }
+    @media (max-width: 1200px) {
+      .controls {
+        flex-wrap: wrap;
+        row-gap: 8px;
+      }
+      .controls select,
+      .controls button.action {
+        width: calc(50% - 4px);
+      }
     }
   </style>
 </head>
@@ -273,6 +297,8 @@
       intervals: {},
       timers: {},
     };
+    let configVersion = 0;
+    let configLoaded = false;
 
     const headers = {
       "apikey": SUPABASE_KEY,
@@ -280,8 +306,17 @@
       "Content-Type": "application/json",
     };
 
-    // Supabase realtime client
-    const realtimeClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    // Supabase client (also used for realtime)
+    const supa = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    const realtimeClient = supa;
+
+    function msToSeconds(ms) {
+      return Math.round(ms / 1000);
+    }
+
+    function secondsToMs(sec) {
+      return Number(sec) * 1000;
+    }
 
     function formatTs(ts) {
       if (!ts) return "";
@@ -302,6 +337,53 @@
       const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?device_id=eq.${DEVICE_ID}&order=ts.desc&limit=${limit}`, { headers });
       if (!res.ok) throw new Error(await res.text());
       return res.json();
+    }
+
+    async function fetchDeviceConfig() {
+      const { data, error } = await supa
+        .from("device_config")
+        .select("bp_interval_s,temp_interval_s,hr_interval_s,spo2_interval_s,config_version")
+        .eq("device_id", DEVICE_ID)
+        .limit(1);
+      if (error) throw error;
+      return data?.[0];
+    }
+
+    async function persistDeviceConfig() {
+      const nextVersion = (configVersion ?? 0) + 1;
+      const payload = {
+        device_id: DEVICE_ID,
+        bp_interval_s: msToSeconds(state.intervals.bp ?? Number(document.getElementById("bpInterval").value)),
+        temp_interval_s: msToSeconds(state.intervals.temp ?? Number(document.getElementById("tempInterval").value)),
+        hr_interval_s: msToSeconds(state.intervals.hr ?? Number(document.getElementById("hrInterval").value)),
+        spo2_interval_s: msToSeconds(state.intervals.spo2 ?? Number(document.getElementById("spo2Interval").value)),
+        config_version: nextVersion,
+        updated_at: new Date().toISOString(),
+      };
+      try {
+        const { data, error } = await supa
+          .from("device_config")
+          .update(payload)
+          .eq("device_id", DEVICE_ID)
+          .select();
+        if (error) throw error;
+        if (data && data.length) {
+          configVersion = data[0]?.config_version ?? nextVersion;
+          return;
+        }
+      } catch (e) {
+        console.error("Failed to update device config via update", e);
+      }
+      try {
+        const { data, error } = await supa
+          .from("device_config")
+          .upsert([payload], { onConflict: "device_id" })
+          .select();
+        if (error) throw error;
+        configVersion = data?.[0]?.config_version ?? nextVersion;
+      } catch (e) {
+        console.error("Failed to upsert device config", e);
+      }
     }
 
     function updateCard(type, row) {
@@ -328,7 +410,7 @@
         return;
       }
       const headersRow = {
-        bp: ["Timestamp", "SYS", "DIA", "HR"],
+        bp: ["Timestamp", "SYS", "DIA"],
         temp: ["Timestamp", "Temp (°C)"],
         hr: ["Timestamp", "HR (BPM)"],
         spo2: ["Timestamp", "SpO₂ (%)"],
@@ -339,7 +421,7 @@
       rows.forEach(r => {
         html += "<tr>";
         if (type === "bp") {
-          html += `<td>${formatTs(r.ts)}</td><td>${r.bp_sys ?? ""}</td><td>${r.bp_dia ?? ""}</td><td>${r.hr ?? r.hr_bpm ?? ""}</td>`;
+          html += `<td>${formatTs(r.ts)}</td><td>${r.bp_sys ?? ""}</td><td>${r.bp_dia ?? ""}</td>`;
         } else if (type === "temp") {
           html += `<td>${formatTs(r.ts)}</td><td>${r.temp_c ?? ""}</td>`;
         } else if (type === "hr") {
@@ -374,14 +456,50 @@
       state.intervals[type] = ms;
     }
 
+    function applyIntervalFromSelect(type) {
+      const select = document.getElementById(`${type}Interval`);
+      schedule(type, Number(select.value));
+    }
+
+    async function handleIntervalChange(type) {
+      applyIntervalFromSelect(type);
+      await persistDeviceConfig();
+    }
+
     function setupIntervals() {
       ["bp","temp","hr","spo2"].forEach(type => {
         const select = document.getElementById(`${type}Interval`);
-        schedule(type, Number(select.value));
         select.addEventListener("change", () => {
-          schedule(type, Number(select.value));
+          handleIntervalChange(type);
         });
       });
+    }
+
+    async function loadDeviceConfig() {
+      try {
+        const cfg = await fetchDeviceConfig();
+        if (cfg) {
+          configVersion = cfg.config_version ?? 0;
+          const map = {
+            bp: cfg.bp_interval_s,
+            temp: cfg.temp_interval_s,
+            hr: cfg.hr_interval_s,
+            spo2: cfg.spo2_interval_s,
+          };
+          ["bp","temp","hr","spo2"].forEach(type => {
+            const select = document.getElementById(`${type}Interval`);
+            const fromDb = Number(map[type]);
+            const ms = Number.isFinite(fromDb) ? secondsToMs(fromDb) : Number(select.value);
+            select.value = String(ms);
+            schedule(type, ms);
+          });
+          configLoaded = true;
+          return;
+        }
+      } catch (e) {
+        console.error("Failed to load device config", e);
+      }
+      ["bp","temp","hr","spo2"].forEach(applyIntervalFromSelect);
     }
 
     function setupHistoryButtons() {
@@ -439,6 +557,7 @@
 
     // Init
     (async function() {
+      await loadDeviceConfig();
       setupIntervals();
       setupHistoryButtons();
       await Promise.all(["bp","temp","hr","spo2"].map(t => refresh(t, false)));
