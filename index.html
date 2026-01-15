@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -211,6 +210,7 @@
         </div>
         <div class="controls">
           <select id="bpInterval">
+            <option value="0">Off</option>
             <option value="60000">1 min</option>
             <option value="300000">5 mins</option>
             <option value="600000">10 mins</option>
@@ -233,6 +233,7 @@
         </div>
         <div class="controls">
           <select id="tempInterval">
+            <option value="0">Off</option>
             <option value="60000">1 min</option>
             <option value="300000">5 mins</option>
             <option value="600000">10 mins</option>
@@ -255,6 +256,7 @@
         </div>
         <div class="controls">
           <select id="hrInterval">
+            <option value="0">Off</option>
             <option value="60000">1 min</option>
             <option value="300000">5 mins</option>
             <option value="600000">10 mins</option>
@@ -277,6 +279,7 @@
         </div>
         <div class="controls">
           <select id="spo2Interval">
+            <option value="0">Off</option>
             <option value="60000">1 min</option>
             <option value="300000">5 mins</option>
             <option value="600000">10 mins</option>
@@ -362,12 +365,12 @@
 
     async function persistDeviceConfig() {
       const nextVersion = (configVersion ?? 0) + 1;
-      const payload = {
-        device_id: DEVICE_ID,
-        bp_interval_s: msToSeconds(state.intervals.bp ?? Number(document.getElementById("bpInterval").value)),
-        temp_interval_s: msToSeconds(state.intervals.temp ?? Number(document.getElementById("tempInterval").value)),
-        hr_interval_s: msToSeconds(state.intervals.hr ?? Number(document.getElementById("hrInterval").value)),
-        spo2_interval_s: msToSeconds(state.intervals.spo2 ?? Number(document.getElementById("spo2Interval").value)),
+        const payload = {
+          device_id: DEVICE_ID,
+          bp_interval_s: msToSeconds(state.intervals.bp ?? Number(document.getElementById("bpInterval").value)),
+          temp_interval_s: msToSeconds(state.intervals.temp ?? Number(document.getElementById("tempInterval").value)),
+          hr_interval_s: msToSeconds(state.intervals.hr ?? Number(document.getElementById("hrInterval").value)),
+          spo2_interval_s: msToSeconds(state.intervals.spo2 ?? Number(document.getElementById("spo2Interval").value)),
         config_version: nextVersion,
         updated_at: new Date().toISOString(),
       };
@@ -463,7 +466,11 @@
 
     function schedule(type, ms) {
       if (state.timers[type]) clearInterval(state.timers[type]);
-      state.timers[type] = setInterval(() => refresh(type, false), ms);
+      if (ms > 0) {
+        state.timers[type] = setInterval(() => refresh(type, false), ms);
+      } else {
+        state.timers[type] = null;
+      }
       state.intervals[type] = ms;
     }
 
